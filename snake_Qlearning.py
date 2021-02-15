@@ -70,7 +70,10 @@ for i in range(batch_size):
             state = tuple(state)
             
             if state in Q_table:
-                observation, reward, done, info = env.step(np.argmax(Q_table[state]))
+                if random.random() > epsilon:
+                    observation, reward, done, info = env.step(np.argmax(Q_table[state]))
+                else:
+                    observation, reward, done, info = env.step(random.randint(0,3))
             else:
                 Q_table[state] = np.zeros(4)
                 observation, reward, done, info = env.step(random.randint(0,3))
