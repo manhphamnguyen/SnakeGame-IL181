@@ -11,79 +11,98 @@ from gym_snake.envs.snake_env import SnakeReward
 env = gym.make('snake-v0')
 
 #Parameters
-train_len = 2000
-batch_size = 10
+batch_size = 1000
 test_len = 5
 epsilon = 0.1
-alpha = 0.33
-gamma = 0.33
+alpha = 0.1
+gamma = 0.1
 
 
 Q_table = {}
 
 #Train for a few batches, each of which will see how well the snake performs so far (to see if it improves over time)
 plot = []
-for i in range(batch_size):
+for _ in range(batch_size):
+    env.reset()
 
-    #Train phase:
-    for i in range(train_len):
-        count = 0
-        next_state = []
-        while True:
-            square = env.game.head()
-            state = []
-            best = np.zeros(4)
-            r = np.zeros(4)
-            for k,i in enumerate([(square[0]-1,square[1]),(square[0]+1,square[1]),(square[0],square[1]+1),(square[0],square[1]-1)]):
-                #Note that wall refers to both the boundary and the snake itself
-                if env.game.cell_state(i) == SnakeCellState.WALL:
-                    state.append(1)
-                else:
-                    state.append(0)
-
-                #Future state
-                new_state = []
-                (s,t) = copy.deepcopy(i)
-                for j in [(s-1,t),(s+1,t),(s,t+1),(s,t-1)]:
-                    if env.game.cell_state(j) == SnakeCellState.WALL:
-                        new_state.append(1)
-                        r[k] = SnakeReward.DEAD
-                    else:
-                        new_state.append(0)
-                        if env.game.cell_state(j) == SnakeCellState.DOT:
-                            r[k] = SnakeReward.DOT
-                        else:
-                            r[k] = SnakeReward.ALIVE
-
-                new_state.append(s-env.game.dot[0])
-                new_state.append(t-env.game.dot[1])
-                new_state = tuple(new_state)
-                if new_state in Q_table:
-                    if np.argmax(Q_table[new_state]) > best[k]:
-                        best[k] = np.argmax(Q_table[new_state])
-                else:
-                    Q_table[new_state] = np.zeros(4)
-
-            #Back to the present
-            state.append(square[0]-env.game.dot[0])
-            state.append(square[1]-env.game.dot[1])
-            state = tuple(state)
-            
-            if state in Q_table:
-                if random.random() > epsilon:
-                    observation, reward, done, info = env.step(np.argmax(Q_table[state]))
-                else:
-                    observation, reward, done, info = env.step(random.randint(0,3))
+    #Train phase
+    #First, we simulate the game
+    train_reward = []
+    next_state = []
+    actions = []
+    count = 0
+    while True:
+        square = env.game.head()
+        state = []
+        for k,i in enumerate([(square[0]-1,square[1]),(square[0]+1,square[1]),(square[0],square[1]+1),(square[0],square[1]-1)]):
+            #Check if there's a wall on the 4 sides of the snake head (its body counts)
+            #Note that wall refers to both the boundary and the snake itself
+            if env.game.cell_state(i) == SnakeCellState.WALL:
+                state.append(1)
             else:
-                Q_table[state] = np.zeros(4)
-                observation, reward, done, info = env.step(random.randint(0,3))
+                state.append(0)
 
-            #Q Learning Update
-            Q_table[state] += alpha*(r+gamma*best-Q_table[state])
+        #Check the snake head's position compared to the dot, 1 if it's on the top or left, 0 if it matches, -1 if it's bottom or right.
+        if square[0] > env.game.dot[0]:
+            state.append(-1)
+        elif square[0] == env.game.dot[0]:
+            state.append(0)
+        else:
+            state.append(1)
 
-            count += 1
-            if done or count > 250:
-                break
+        if square[1] > env.game.dot[1]:
+            state.append(-1)
+        elif square[1] == env.game.dot[1]:
+            state.append(0)
+        else:
+            state.append(1)        
+
+        state = tuple(state)
+        
+        #Choose an action based on the Q table and epsilon, make random moves once in a while and when Q-table is yet to reach the state
+        if state in Q_table:
+            if random.random() > epsilon:
+                action = np.argmax(Q_table[state])
+            else:
+                action = random.randint(0,3)
+        else:
+            Q_table[state] = np.zeros(4)
+            action = random.randint(0,3)
+
+        #Reward for the action, encouraging the snake head converging to the apple
+        if len(next_state) >= 1:
+            reward = 0
+            last_state = next_state[-1]
+            if last_state[4] == 0 and state[4] != 0:
+                reward -= 10
+            if last_state[4] != 0 and state[4] == 0:
+                reward += 10
+            if last_state[5] == 0 and state[5] != 0:
+                reward -= 10
+            if last_state[5] != 0 and state[5] == 0:
+                reward += 10
+            train_reward.append(reward)
+        actions.append(action)
+        next_state.append(state)
+
+        observation, reward, done, info = env.step(action)
+        count += 1
+
+        #Stop when termination condition reached (snake dies or eat the apple or too many moves)
+        if done or count > 250:
+            train_reward.append(reward)
+            break
+
+    #Now we train the Q-table from the data collected in that game
+    train_reward = train_reward[::-1]
+    next_state = next_state[::-1]
+    actions = actions[::-1]
+    for i in range(len(next_state)):
+        #Q Learning Update
+        if i == 0:
+            Q_table[next_state[i]][actions[i]] = train_reward[i]
+        else:
+            Q_table[next_state[i]][actions[i]] += alpha*(train_reward[i]+gamma*max(Q_table[next_state[i-1]])-Q_table[next_state[i]][actions[i]])
 
     #Test phase
     total_r = 0
@@ -93,6 +112,7 @@ for i in range(batch_size):
         count = 0
         while True:
             #env.render()
+            #State creation, the same as train phase
             square = env.game.head()
             state = []
             for i in ([(square[0]-1,square[1]),(square[0]+1,square[1]),(square[0],square[1]+1),(square[0],square[1]-1)]):
@@ -102,10 +122,22 @@ for i in range(batch_size):
                 else:
                     state.append(0)
 
-            state.append(square[0]-env.game.dot[0])
-            state.append(square[1]-env.game.dot[1])
+            if square[0] > env.game.dot[0]:
+                state.append(-1)
+            elif square[0] == env.game.dot[0]:
+                state.append(0)
+            else:
+                state.append(1)
+
+            if square[1] > env.game.dot[1]:
+                state.append(-1)
+            elif square[1] == env.game.dot[1]:
+                state.append(0)
+            else:
+                state.append(1)
             state = tuple(state)
 
+            #Choose an action now does not use epsilon
             if state in Q_table:
                 observation, reward, done, info = env.step(np.argmax(Q_table[state]))
             else:
@@ -116,12 +148,12 @@ for i in range(batch_size):
             #time.sleep(0.1)
             #termination
             if done or count > 250:
-                print('episode {} finished with {} reward'.format(i,r))
+                #print('episode {} finished with {} reward'.format(i,r))
                 total_r += r
                 break
     plot.append(total_r/test_len)
 
-plt.plot(range(batch_size,batch_size*train_len+1,train_len),plot)
+plt.plot(range(batch_size),plot)
 plt.xlabel('Training size')
 plt.ylabel('Average Test Reward')
 plt.show()
