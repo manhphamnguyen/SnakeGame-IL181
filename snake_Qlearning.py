@@ -5,6 +5,8 @@ import time
 from matplotlib import pyplot as plt
 import numpy as np
 import copy
+import pickle
+from sklearn.linear_model import LinearRegression
 
 from gym_snake.envs.snake_env import SnakeCellState
 from gym_snake.envs.snake_env import SnakeReward
@@ -17,7 +19,10 @@ epsilon = 0.1
 alpha = 0.1
 gamma = 0.1
 
-
+#Load the q value table
+file = open("q.pkl", "rb")
+#Q_table = pickle.load(file)
+#If you want to start from scratch
 Q_table = {}
 
 #Train for a few batches, each of which will see how well the snake performs so far (to see if it improves over time)
@@ -69,7 +74,7 @@ for _ in range(batch_size):
             Q_table[state] = np.zeros(4)
             action = random.randint(0,3)
 
-        #Reward for the action, encouraging the snake head converging to the apple
+        #Reward for the action, encouraging the snake head to converge towards the apple
         if len(next_state) >= 1:
             reward = 0
             last_state = next_state[-1]
@@ -81,6 +86,15 @@ for _ in range(batch_size):
                 reward -= 10
             if last_state[5] != 0 and state[5] == 0:
                 reward += 10
+            if action == 0 and state[4] == -1:
+                reward += 10
+            if action == 1 and state[4] == 1:
+                reward += 10
+            if action == 3 and state[5] == -1:
+                reward += 10
+            if action == 2 and state[5] == 1:
+                reward += 10
+
             train_reward.append(reward)
         actions.append(action)
         next_state.append(state)
@@ -111,7 +125,8 @@ for _ in range(batch_size):
         r = 0
         count = 0
         while True:
-            #env.render()
+            #if _ % 2000 == 0:
+            #    env.render()
             #State creation, the same as train phase
             square = env.game.head()
             state = []
@@ -137,7 +152,7 @@ for _ in range(batch_size):
                 state.append(1)
             state = tuple(state)
 
-            #Choose an action now does not use epsilon
+            #Choose an action, does not use epsilon nor update the Q_table
             if state in Q_table:
                 observation, reward, done, info = env.step(np.argmax(Q_table[state]))
             else:
@@ -153,7 +168,18 @@ for _ in range(batch_size):
                 break
     plot.append(total_r/test_len)
 
-plt.plot(range(batch_size),plot)
+file = open("q.pkl", "wb")
+pickle.dump(Q_table, file)
+file.close()
+
+model = LinearRegression()
+model.fit(np.array(range(batch_size)).reshape(-1,1),np.array(plot).reshape(-1,1))
+
+plt.scatter(range(batch_size),plot)
+plt.plot([0,batch_size],[model.intercept_,model.coef_*batch_size+model.intercept_],color = 'red')
+print(model.coef_*batch_size+model.intercept_)
+print(plot[-1])
+
 plt.xlabel('Training size')
 plt.ylabel('Average Test Reward')
 plt.show()
